@@ -1,0 +1,106 @@
+[
+  {
+    "id": "RCA-2024-001",
+    "title": "PFGateway TLS Certificate Expiry causing 100% traffic drop",
+    "affected_services": ["PFGateway", "PFOrchestrator", "PFLoadBalancer"],
+    "date": "2024-03-15",
+    "root_cause": "The TLS certificate for PFGateway expired without auto-renewal triggering due to a misconfigured Key Vault access policy. The rotation runbook had an outdated service principal reference.",
+    "mitigation_steps": [
+      "Identify the expired certificate CN via: az keyvault certificate show --vault-name <vault> --name <cert-name>",
+      "Manually renew the certificate: az keyvault certificate create --vault-name <vault> --name <cert-name> --policy @policy.json",
+      "Update the gateway certificate binding: kubectl rollout restart deployment/pf-gateway -n pf-system",
+      "Verify TLS handshakes resume: curl -v https://<gateway-endpoint>/health",
+      "Update Key Vault access policy to include the correct MSI for auto-rotation"
+    ],
+    "time_to_mitigate_minutes": 45,
+    "tags": ["tls", "certificate", "keyvault", "gateway"],
+    "lessons_learned": "All certificate rotations must be tested in staging 30 days prior. Auto-renewal alerts should fire at 60, 30, and 7 days before expiry."
+  },
+  {
+    "id": "RCA-2024-002",
+    "title": "PFOrchestrator OOM crash loop after memory leak in job processor",
+    "affected_services": ["PFOrchestrator", "PFWorkerPool", "PFScheduler"],
+    "date": "2024-05-22",
+    "root_cause": "A recent deployment of PFOrchestrator v2.3.1 introduced a memory leak in the JobProcessor class where event handlers were not deregistered after job completion, leading to unbounded memory growth.",
+    "mitigation_steps": [
+      "Confirm OOM via: kubectl describe pod -l app=pf-orchestrator -n pf-system | grep -A5 OOMKilled",
+      "Roll back to previous stable version: kubectl set image deployment/pf-orchestrator orchestrator=pfregistry.azurecr.io/orchestrator:v2.3.0",
+      "Monitor memory usage: kubectl top pods -n pf-system --sort-by memory",
+      "Drain in-flight jobs before rollback to avoid corruption: kubectl exec -it <pod> -- ./drain-jobs.sh",
+      "Verify orchestrator health endpoint returns 200: curl http://pf-orchestrator/health"
+    ],
+    "time_to_mitigate_minutes": 20,
+    "tags": ["oom", "memory-leak", "orchestrator", "rollback"],
+    "lessons_learned": "Memory profiling gates added to CI/CD pipeline. Load tests now run for 2 hours to detect slow leaks."
+  },
+  {
+    "id": "RCA-2024-003",
+    "title": "PFStorageService CosmosDB throttling causing widespread job failures",
+    "affected_services": ["PFStorageService", "PFWorkerPool", "PFOrchestrator", "PFResultCollector"],
+    "date": "2024-07-10",
+    "root_cause": "A bulk data migration job ran during peak traffic hours and consumed 95% of provisioned RUs on the shared CosmosDB collection, causing 429 throttling errors for all other PF services.",
+    "mitigation_steps": [
+      "Check CosmosDB metrics for RU consumption: az cosmosdb metrics list --name <account> --resource-group <rg>",
+      "Identify the offending partition/query via Azure Portal Metrics Explorer (filter by StatusCode=429)",
+      "Pause the migration job: kubectl delete job pf-data-migration -n pf-jobs",
+      "Increase RU capacity temporarily: az cosmosdb sql container throughput update --throughput 50000",
+      "Restart affected services to clear retry queues: kubectl rollout restart deployment/pf-worker-pool pf-orchestrator -n pf-system",
+      "Schedule migration job during off-peak hours with RU limits configured"
+    ],
+    "time_to_mitigate_minutes": 30,
+    "tags": ["cosmosdb", "throttling", "storage", "429", "ru-exhaustion"],
+    "lessons_learned": "Bulk jobs must run in off-peak windows with explicit RU budget limits. Separate CosmosDB collections for batch vs real-time workloads."
+  },
+  {
+    "id": "RCA-2024-004",
+    "title": "PFConfigService AppConfiguration refresh loop causing CPU spike",
+    "affected_services": ["PFConfigService", "PFOrchestrator", "PFGateway"],
+    "date": "2024-09-03",
+    "root_cause": "A configuration change pushed to Azure App Configuration triggered an infinite refresh loop in PFConfigService due to a missing cache TTL validation. The service consumed 100% CPU and stopped responding to health checks.",
+    "mitigation_steps": [
+      "Check AppConfiguration recent changes: az appconfig revision list --name <config-name> --datetime '2024-09-03T00:00:00Z'",
+      "Revert the problematic config change via Azure Portal or CLI",
+      "Restart PFConfigService: kubectl rollout restart deployment/pf-config-service -n pf-system",
+      "If PFGateway is also impacted, restart it after config service is healthy",
+      "Validate config endpoints return correct values: curl http://pf-config-service/config/health"
+    ],
+    "time_to_mitigate_minutes": 15,
+    "tags": ["appconfig", "cpu", "config-service", "infinite-loop", "cache"],
+    "lessons_learned": "AppConfiguration changes must be validated in staging first. Config refresh cache TTL minimum enforced at 30 seconds."
+  },
+  {
+    "id": "RCA-2024-005",
+    "title": "ServiceBus namespace exhaustion causing PFScheduler job queue backup",
+    "affected_services": ["PFScheduler", "PFWorkerPool", "PFOrchestrator"],
+    "date": "2024-10-18",
+    "root_cause": "Azure Service Bus namespace hit the maximum message count limit (80GB) because dead-letter queue messages were never purged. New messages were rejected, causing job scheduling to halt.",
+    "mitigation_steps": [
+      "Check Service Bus namespace usage: az servicebus namespace show --name <ns> --resource-group <rg>",
+      "Check dead-letter queue depth: az servicebus queue show --name <queue-name> --namespace-name <ns>",
+      "Purge dead-letter queue (use Azure Portal or Service Bus Explorer tool)",
+      "Scale up namespace tier if needed: az servicebus namespace update --sku Premium",
+      "Restart PFScheduler: kubectl rollout restart deployment/pf-scheduler -n pf-system",
+      "Verify job queue is draining: watch -n5 'az servicebus queue show --name pf-jobs --namespace-name <ns> | jq .messageCount'"
+    ],
+    "time_to_mitigate_minutes": 60,
+    "tags": ["servicebus", "queue", "dead-letter", "scheduler", "capacity"],
+    "lessons_learned": "Dead-letter queue purge automation added. Namespace capacity alerts added at 70% and 85% thresholds."
+  },
+  {
+    "id": "RCA-2024-006",
+    "title": "AAD token acquisition failures causing PFGateway authentication outage",
+    "affected_services": ["PFGateway", "PFOrchestrator"],
+    "date": "2024-11-05",
+    "root_cause": "Azure Active Directory experienced a regional outage in East US, causing PFGateway to fail all authentication requests. The gateway did not have an AAD token cache with sufficient TTL to survive the outage window.",
+    "mitigation_steps": [
+      "Confirm AAD status on Azure Status Page: https://status.azure.com",
+      "Check AAD token cache hit rate in Application Insights: requests | where name contains 'token'",
+      "If AAD is the root cause, failover traffic to West US cluster: az traffic-manager endpoint update --status Enabled --name westus-endpoint",
+      "Enable emergency bypass mode if configured: kubectl set env deployment/pf-gateway AAD_BYPASS_MODE=emergency",
+      "Notify customers via status page and internal channels"
+    ],
+    "time_to_mitigate_minutes": 25,
+    "tags": ["aad", "authentication", "gateway", "failover", "token-cache"],
+    "lessons_learned": "AAD token cache TTL extended to 1 hour. Cross-region failover runbook now automated with Traffic Manager health probes."
+  }
+]

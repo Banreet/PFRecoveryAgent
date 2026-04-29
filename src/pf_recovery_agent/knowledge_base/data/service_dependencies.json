@@ -1,0 +1,122 @@
+[
+  {
+    "service_name": "PFGateway",
+    "upstream_dependencies": ["AAD", "AzureDNS", "TrafficManager"],
+    "downstream_dependents": ["PFOrchestrator", "PFLoadBalancer", "PFHealthProbe"],
+    "cluster": "PF-Cluster-EastUS",
+    "tier": 1,
+    "description": "Primary ingress gateway for all PF traffic. Routes requests to orchestrator and manages TLS termination."
+  },
+  {
+    "service_name": "PFOrchestrator",
+    "upstream_dependencies": ["PFGateway", "PFConfigService", "KeyVault"],
+    "downstream_dependents": ["PFWorkerPool", "PFScheduler", "PFAuditLog"],
+    "cluster": "PF-Cluster-EastUS",
+    "tier": 1,
+    "description": "Central orchestrator responsible for job scheduling, resource allocation, and cross-service coordination."
+  },
+  {
+    "service_name": "PFWorkerPool",
+    "upstream_dependencies": ["PFOrchestrator", "PFStorageService", "ServiceBus"],
+    "downstream_dependents": ["PFResultCollector", "PFMetricsEmitter"],
+    "cluster": "PF-Cluster-EastUS",
+    "tier": 2,
+    "description": "Pool of compute workers that execute PF jobs. Scales horizontally based on queue depth."
+  },
+  {
+    "service_name": "PFStorageService",
+    "upstream_dependencies": ["AzureStorageAccount", "CosmosDB", "KeyVault"],
+    "downstream_dependents": ["PFWorkerPool", "PFOrchestrator", "PFAuditLog"],
+    "cluster": "PF-Cluster-EastUS",
+    "tier": 1,
+    "description": "Manages persistent state for PF jobs, artifacts, and configuration. Critical dependency for most services."
+  },
+  {
+    "service_name": "PFConfigService",
+    "upstream_dependencies": ["AppConfiguration", "KeyVault"],
+    "downstream_dependents": ["PFOrchestrator", "PFGateway", "PFHealthProbe"],
+    "cluster": "PF-Cluster-EastUS",
+    "tier": 1,
+    "description": "Centralized configuration service. Outage here causes cascading failures across gateway and orchestrator."
+  },
+  {
+    "service_name": "PFHealthProbe",
+    "upstream_dependencies": ["PFGateway", "PFConfigService", "PFStorageService"],
+    "downstream_dependents": ["AzureMonitor", "PFAlertingService"],
+    "cluster": "PF-Cluster-EastUS",
+    "tier": 2,
+    "description": "Continuous health checking service that monitors all PF components and feeds Azure Monitor."
+  },
+  {
+    "service_name": "PFScheduler",
+    "upstream_dependencies": ["PFOrchestrator", "PFConfigService", "ServiceBus"],
+    "downstream_dependents": ["PFWorkerPool", "PFAuditLog"],
+    "cluster": "PF-Cluster-EastUS",
+    "tier": 2,
+    "description": "Time-based and event-triggered job scheduler. Manages retry logic and priority queues."
+  },
+  {
+    "service_name": "PFLoadBalancer",
+    "upstream_dependencies": ["PFGateway", "AzureLoadBalancer"],
+    "downstream_dependents": ["PFOrchestrator", "PFWorkerPool"],
+    "cluster": "PF-Cluster-EastUS",
+    "tier": 1,
+    "description": "Internal load balancer that distributes traffic across orchestrator and worker instances."
+  },
+  {
+    "service_name": "PFAuditLog",
+    "upstream_dependencies": ["PFOrchestrator", "PFScheduler", "EventHub"],
+    "downstream_dependents": ["ComplianceService", "SecurityMonitoring"],
+    "cluster": "PF-Cluster-EastUS",
+    "tier": 3,
+    "description": "Audit logging service. Not on critical path but required for compliance."
+  },
+  {
+    "service_name": "PFResultCollector",
+    "upstream_dependencies": ["PFWorkerPool", "PFStorageService"],
+    "downstream_dependents": ["PFNotificationService", "CustomerAPI"],
+    "cluster": "PF-Cluster-EastUS",
+    "tier": 2,
+    "description": "Collects and aggregates results from worker pool, persists to storage and notifies customers."
+  },
+  {
+    "service_name": "PFNotificationService",
+    "upstream_dependencies": ["PFResultCollector", "EmailGateway", "SMSGateway"],
+    "downstream_dependents": [],
+    "cluster": "PF-Cluster-EastUS",
+    "tier": 3,
+    "description": "Sends notifications to customers and internal teams upon job completion or failure."
+  },
+  {
+    "service_name": "PFMetricsEmitter",
+    "upstream_dependencies": ["PFWorkerPool", "AzureMonitor"],
+    "downstream_dependents": ["PFAlertingService"],
+    "cluster": "PF-Cluster-EastUS",
+    "tier": 3,
+    "description": "Emits telemetry and performance metrics to Azure Monitor for dashboards and alerting."
+  },
+  {
+    "service_name": "PFAlertingService",
+    "upstream_dependencies": ["PFHealthProbe", "PFMetricsEmitter", "AzureMonitor"],
+    "downstream_dependents": ["PagerDuty", "IcMConnector"],
+    "cluster": "PF-Cluster-EastUS",
+    "tier": 2,
+    "description": "Aggregates health signals and fires ICM incidents. Feeds PagerDuty and on-call rotation."
+  },
+  {
+    "service_name": "PFGateway",
+    "upstream_dependencies": ["AAD", "AzureDNS", "TrafficManager"],
+    "downstream_dependents": ["PFOrchestrator", "PFLoadBalancer", "PFHealthProbe"],
+    "cluster": "PF-Cluster-WestUS",
+    "tier": 1,
+    "description": "West US replica of the primary gateway for geo-redundancy."
+  },
+  {
+    "service_name": "PFOrchestrator",
+    "upstream_dependencies": ["PFGateway", "PFConfigService", "KeyVault"],
+    "downstream_dependents": ["PFWorkerPool", "PFScheduler", "PFAuditLog"],
+    "cluster": "PF-Cluster-WestUS",
+    "tier": 1,
+    "description": "West US orchestrator instance. Operates independently but shares global config."
+  }
+]
