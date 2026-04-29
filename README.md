@@ -6,7 +6,7 @@
 
 ## Overview
 
-**PFRecoveryAgent** is an Azure-native AI agent for on-call engineers responding to Azure PF (Platform Foundation) service outages. When triggered during an active incident, the agent:
+**PFRecoveryAgent** is an Azure-native AI agent for on-call engineers responding to Azure PF (PilotFish) service outages. When triggered during an active incident, the agent:
 
 1. **Queries live Azure data sources** – Azure Service Health, Resource Health, and Log Analytics – to ground its analysis in the actual state of the environment.
 2. **Maps the blast radius** using a cross-cluster runtime service dependency graph.

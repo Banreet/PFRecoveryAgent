@@ -284,7 +284,7 @@ def _build_client():
 # System prompt
 # ---------------------------------------------------------------------------
 
-_SYSTEM_PROMPT = """You are PFRecoveryAgent, an AI expert for Azure PF (Platform Foundation) service outages.
+_SYSTEM_PROMPT = """You are PFRecoveryAgent, an AI expert for Azure PF (PilotFish) service outages.
 
 Your mission is to help on-call engineers achieve the fastest possible RTO (Recovery Time Objective) by combining real-time Azure data with historical knowledge.
 
