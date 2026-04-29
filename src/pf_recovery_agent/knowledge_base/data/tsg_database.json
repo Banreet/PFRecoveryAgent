@@ -1,0 +1,170 @@
+[
+  {
+    "id": "TSG-001",
+    "title": "PFGateway Health Check Failure",
+    "applicable_services": ["PFGateway", "PFLoadBalancer"],
+    "symptoms": [
+      "HTTP 502/503 responses from gateway endpoint",
+      "Health probe returning unhealthy",
+      "Traffic Manager routing to single endpoint",
+      "High latency on all incoming requests"
+    ],
+    "diagnostic_steps": [
+      "Check gateway pod status: kubectl get pods -l app=pf-gateway -n pf-system",
+      "Review gateway logs for errors: kubectl logs -l app=pf-gateway -n pf-system --tail=200",
+      "Verify TLS certificate validity: openssl s_client -connect <gateway-host>:443 -servername <gateway-host> | openssl x509 -noout -dates",
+      "Check upstream AAD connectivity: curl -I https://login.microsoftonline.com/common/discovery/v2.0/keys",
+      "Inspect Azure Traffic Manager health probe status in Azure Portal",
+      "Review Application Insights for failed dependency calls from gateway"
+    ],
+    "mitigation_steps": [
+      "If certificate expired: renew via Key Vault and restart gateway deployment",
+      "If AAD unreachable: initiate cross-region failover via Traffic Manager",
+      "If pod is crash-looping: roll back to previous deployment version",
+      "If DNS issue: verify AzureDNS zone records and TTL settings",
+      "Scale out gateway replicas if CPU/memory is the bottleneck: kubectl scale deployment/pf-gateway --replicas=6"
+    ],
+    "escalation_path": "PF-Gateway-DRI -> PF-Networking-Team -> Azure Networking Support",
+    "tags": ["gateway", "health-check", "tls", "dns", "502", "503"]
+  },
+  {
+    "id": "TSG-002",
+    "title": "PFOrchestrator Unresponsive / High Latency",
+    "applicable_services": ["PFOrchestrator", "PFWorkerPool", "PFScheduler"],
+    "symptoms": [
+      "Job submissions timing out",
+      "PFOrchestrator health endpoint returning 503 or timing out",
+      "Worker pool idle despite jobs in queue",
+      "High CPU or memory on orchestrator pods"
+    ],
+    "diagnostic_steps": [
+      "Check orchestrator pod resource usage: kubectl top pods -l app=pf-orchestrator -n pf-system",
+      "Look for OOMKilled events: kubectl describe pod -l app=pf-orchestrator -n pf-system | grep -A10 Events",
+      "Check recent deployments: kubectl rollout history deployment/pf-orchestrator -n pf-system",
+      "Review orchestrator logs for deadlocks or exceptions: kubectl logs -l app=pf-orchestrator -n pf-system --tail=500",
+      "Check PFConfigService health (orchestrator depends on it): curl http://pf-config-service/health",
+      "Review distributed traces in Application Insights for slow spans"
+    ],
+    "mitigation_steps": [
+      "If OOMKilled: roll back to previous version and file memory-leak investigation",
+      "If stuck on config: restart PFConfigService first, then PFOrchestrator",
+      "If deadlock detected in logs: perform graceful restart: kubectl rollout restart deployment/pf-orchestrator",
+      "If recent bad deployment: kubectl rollout undo deployment/pf-orchestrator",
+      "Temporarily increase resource limits if load spike: kubectl set resources deployment/pf-orchestrator --limits=memory=4Gi"
+    ],
+    "escalation_path": "PF-Orchestrator-DRI -> PF-Platform-Team -> Azure Support",
+    "tags": ["orchestrator", "oom", "deadlock", "latency", "high-cpu"]
+  },
+  {
+    "id": "TSG-003",
+    "title": "PFStorageService Failures (CosmosDB / Azure Storage)",
+    "applicable_services": ["PFStorageService", "PFWorkerPool", "PFOrchestrator"],
+    "symptoms": [
+      "429 Too Many Requests errors in storage service logs",
+      "Job state writes failing",
+      "Worker pool unable to read job definitions",
+      "CosmosDB latency spike visible in Azure Portal"
+    ],
+    "diagnostic_steps": [
+      "Check CosmosDB account metrics: Azure Portal > CosmosDB account > Metrics > Request Units",
+      "Identify top RU-consuming queries: Azure Portal > CosmosDB > Insights > Top 10 Requests",
+      "Check for long-running batch jobs: kubectl get jobs -n pf-jobs",
+      "Review storage service logs: kubectl logs -l app=pf-storage-service -n pf-system --tail=200",
+      "Check Azure Storage account status at https://status.azure.com",
+      "Verify Key Vault connectivity for storage credentials: kubectl exec -it <pod> -- curl http://169.254.169.254/metadata/identity/oauth2/token"
+    ],
+    "mitigation_steps": [
+      "If RU exhaustion: identify and pause offending batch jobs, then scale up throughput",
+      "If Azure Storage outage: activate secondary storage account failover",
+      "If Key Vault unreachable: ensure MSI role assignments are correct, restart pods",
+      "Scale up CosmosDB throughput temporarily: az cosmosdb sql container throughput update --throughput 50000",
+      "Enable request throttling on the storage service to protect CosmosDB"
+    ],
+    "escalation_path": "PF-Storage-DRI -> Azure CosmosDB Support -> Azure Storage Support",
+    "tags": ["cosmosdb", "storage", "429", "throttling", "keyvault", "ru"]
+  },
+  {
+    "id": "TSG-004",
+    "title": "PFWorkerPool Job Processing Failures",
+    "applicable_services": ["PFWorkerPool", "PFScheduler", "PFResultCollector"],
+    "symptoms": [
+      "Jobs stuck in 'Queued' state for > 5 minutes",
+      "Worker pods showing high error rate",
+      "Service Bus queue depth growing without drain",
+      "PFResultCollector reporting no results received"
+    ],
+    "diagnostic_steps": [
+      "Check worker pod logs: kubectl logs -l app=pf-worker-pool -n pf-system --tail=300",
+      "Inspect Service Bus queue metrics: az servicebus queue show --name pf-jobs --namespace-name <ns>",
+      "Check dead-letter queue depth: az servicebus queue show --name pf-jobs/$deadletterqueue --namespace-name <ns>",
+      "Verify PFStorageService is healthy: curl http://pf-storage-service/health",
+      "Check for node-level issues: kubectl describe nodes | grep -A5 'Conditions'",
+      "Review recent config changes that may affect worker processing logic"
+    ],
+    "mitigation_steps": [
+      "If Service Bus is full: purge dead-letter queue and restart workers",
+      "If PFStorage is unhealthy: fix storage first (see TSG-003), then restart workers",
+      "Scale out worker pool for capacity issues: kubectl scale deployment/pf-worker-pool --replicas=20",
+      "Restart worker pool to clear stuck state: kubectl rollout restart deployment/pf-worker-pool",
+      "If node issues: cordon and drain the problematic node, let scheduler move pods"
+    ],
+    "escalation_path": "PF-Worker-DRI -> PF-Platform-Team",
+    "tags": ["worker-pool", "service-bus", "job-queue", "stuck-jobs", "processing"]
+  },
+  {
+    "id": "TSG-005",
+    "title": "Cross-Cluster Communication Failure",
+    "applicable_services": ["PFGateway", "PFOrchestrator", "PFLoadBalancer"],
+    "symptoms": [
+      "Requests from West US cluster failing to reach East US cluster",
+      "Traffic Manager health probe failures on one endpoint",
+      "Increased latency for cross-region API calls",
+      "Network policy errors in pod logs"
+    ],
+    "diagnostic_steps": [
+      "Check Traffic Manager endpoint health: az traffic-manager endpoint show --profile-name pf-traffic-manager",
+      "Verify VNet peering status: az network vnet peering list --resource-group <rg> --vnet-name <vnet>",
+      "Test cross-cluster connectivity: kubectl exec -it <pod> -- curl -v http://pf-gateway.pf-cluster-westus.svc.cluster.local/health",
+      "Check Network Security Group rules for inter-cluster ports",
+      "Review PFLoadBalancer logs for failed backend connections",
+      "Check Azure ExpressRoute or VPN Gateway status if applicable"
+    ],
+    "mitigation_steps": [
+      "If Traffic Manager probe failing: update probe health thresholds or failover to healthy endpoint",
+      "If VNet peering broken: re-establish peering connection via Azure Portal",
+      "If NSG blocking traffic: add allow rule for required ports (443, 8080, 9090)",
+      "Route all traffic to single healthy cluster until cross-cluster link is restored",
+      "Engage Azure Networking team if infrastructure-level issue suspected"
+    ],
+    "escalation_path": "PF-Networking-DRI -> Azure Networking Support",
+    "tags": ["cross-cluster", "vnet", "traffic-manager", "networking", "peering"]
+  },
+  {
+    "id": "TSG-006",
+    "title": "PFAlertingService Not Firing Incidents",
+    "applicable_services": ["PFAlertingService", "PFHealthProbe", "PFMetricsEmitter"],
+    "symptoms": [
+      "Known outage with no ICM incident created",
+      "PagerDuty not receiving alerts",
+      "Azure Monitor alert rules showing 'No data'",
+      "Health probe metrics gap in dashboards"
+    ],
+    "diagnostic_steps": [
+      "Check Azure Monitor alert rule status in Azure Portal",
+      "Verify PFHealthProbe is running: kubectl get pods -l app=pf-health-probe -n pf-system",
+      "Check PFMetricsEmitter logs: kubectl logs -l app=pf-metrics-emitter -n pf-system --tail=100",
+      "Verify Azure Monitor workspace connectivity from pods",
+      "Check PagerDuty integration webhook in Azure Monitor action groups",
+      "Review ICM connector configuration and credentials"
+    ],
+    "mitigation_steps": [
+      "Manually create ICM incident if alerting is down",
+      "Restart PFHealthProbe and PFMetricsEmitter",
+      "Validate Azure Monitor workspace ingestion via Log Analytics query",
+      "Re-configure action group webhook if PagerDuty token has rotated",
+      "Use Azure CLI to manually trigger test alert: az monitor metrics alert create (test rule)"
+    ],
+    "escalation_path": "PF-Monitoring-DRI -> Azure Monitor Support",
+    "tags": ["alerting", "monitoring", "icm", "pagerduty", "health-probe", "metrics"]
+  }
+]
