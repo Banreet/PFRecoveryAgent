@@ -16,7 +16,27 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 
-class TestSplitField:
+class TestODataEscape:
+    def test_safe_string_unchanged(self):
+        from pf_recovery_agent.search.azure_search_client import _odata_escape
+
+        assert _odata_escape("PFGateway") == "PFGateway"
+
+    def test_single_quote_doubled(self):
+        from pf_recovery_agent.search.azure_search_client import _odata_escape
+
+        assert _odata_escape("O'Brien") == "O''Brien"
+
+    def test_multiple_quotes_escaped(self):
+        from pf_recovery_agent.search.azure_search_client import _odata_escape
+
+        assert _odata_escape("it's a 'test'") == "it''s a ''test''"
+
+    def test_empty_string(self):
+        from pf_recovery_agent.search.azure_search_client import _odata_escape
+
+        assert _odata_escape("") == ""
+
     def test_comma_split(self):
         from pf_recovery_agent.search.azure_search_client import _split_field
 

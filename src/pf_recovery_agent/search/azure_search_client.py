@@ -217,11 +217,19 @@ def upload_documents(index_name: str, documents: list[dict[str, Any]]) -> int:
 # Search helpers
 # ---------------------------------------------------------------------------
 
+def _odata_escape(value: str) -> str:
+    """Escape a string value for safe use in an OData filter expression.
+
+    Single quotes are doubled per the OData specification to prevent injection.
+    """
+    return value.replace("'", "''")
+
+
 def _build_filter(field: str, values: list[str]) -> str | None:
     """Build an OData filter expression matching any of the given values."""
     if not values:
         return None
-    clauses = [f"search.ismatch('{v}', '{field}')" for v in values]
+    clauses = [f"search.ismatch('{_odata_escape(v)}', '{field}')" for v in values]
     return " or ".join(clauses)
 
 
@@ -372,7 +380,7 @@ def search_dependency_index(
         List of service dependency dicts.
     """
     client = _search_client(AZURE_SEARCH_DEPENDENCY_INDEX)
-    filter_expr = " or ".join(f"service_name eq '{s}'" for s in service_names)
+    filter_expr = " or ".join(f"service_name eq '{_odata_escape(s)}'" for s in service_names)
     results = client.search(
         search_text="*",
         filter=filter_expr,

@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import json
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import typer
@@ -148,7 +148,7 @@ def run(
             severity=OutageSeverity(severity),
             symptoms=symptoms or [],
             additional_context=context,
-            start_time=datetime.utcnow(),
+            start_time=datetime.now(timezone.utc),
         )
 
     console.print(f"\n[bold cyan]PF Recovery Agent[/bold cyan] analysing outage [bold]{outage.id}[/bold]…\n")

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
@@ -38,7 +38,7 @@ class OutageEvent(BaseModel):
     )
     severity: OutageSeverity = Field(default=OutageSeverity.SEV1)
     status: OutageStatus = Field(default=OutageStatus.ACTIVE)
-    start_time: datetime = Field(default_factory=datetime.utcnow)
+    start_time: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     symptoms: list[str] = Field(
         default_factory=list, description="Observed symptoms / error signals"
     )
