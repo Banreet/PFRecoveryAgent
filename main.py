@@ -18,6 +18,10 @@ Usage examples
 # Provide outage via JSON file:
     python main.py run --from-file outage.json
 
+# Seed Azure AI Search indexes from the bundled knowledge base:
+    python main.py index-knowledge-base
+    python main.py index-knowledge-base --skip-embeddings   # text-only, no vector search
+
 # Demo mode (no OpenAI key required):
     python main.py demo
 """
@@ -260,6 +264,94 @@ def list_tsgs() -> None:
             tsg.escalation_path[:40],
         )
     console.print(table)
+
+
+@app.command("index-knowledge-base")
+def index_knowledge_base(
+    skip_embeddings: bool = typer.Option(
+        False,
+        "--skip-embeddings",
+        help="Skip Azure OpenAI vector embedding generation (text-only search).",
+    ),
+) -> None:
+    """
+    Create / update Azure AI Search indexes and populate them from the bundled
+    knowledge base (RCAs, TSGs, service dependencies).
+
+    Requires AZURE_SEARCH_ENDPOINT and AZURE_SEARCH_API_KEY to be set.
+    Set AZURE_OPENAI_EMBEDDING_DEPLOYMENT to enable vector search.
+    """
+    from pf_recovery_agent.config import USE_AZURE_SEARCH
+
+    if not USE_AZURE_SEARCH:
+        rprint(
+            "[red]Error:[/red] Azure AI Search is not configured.\n"
+            "Set [bold]AZURE_SEARCH_ENDPOINT[/bold] and [bold]AZURE_SEARCH_API_KEY[/bold] "
+            "in your environment or .env file."
+        )
+        raise typer.Exit(code=1)
+
+    from pf_recovery_agent.search.indexer import run_indexer
+
+    rprint("\n[bold cyan]Indexing knowledge base into Azure AI Search…[/bold cyan]")
+    if skip_embeddings:
+        rprint("[dim]Vector embeddings skipped – text-only search will be used.[/dim]")
+
+    try:
+        counts = run_indexer(skip_embeddings=skip_embeddings)
+    except Exception as exc:
+        rprint(f"[red]Indexing failed:[/red] {exc}")
+        raise typer.Exit(code=1)
+
+    rprint(
+        f"\n[bold green]✓ Indexing complete![/bold green]\n"
+        f"  RCAs indexed:         {counts['rcas']}\n"
+        f"  TSGs indexed:         {counts['tsgs']}\n"
+        f"  Dependencies indexed: {counts['dependencies']}"
+    )
+
+
+@app.command("search-status")
+def search_status() -> None:
+    """Show the current Azure AI Search and Azure OpenAI configuration status."""
+    from pf_recovery_agent.config import (
+        AZURE_OPENAI_DEPLOYMENT,
+        AZURE_OPENAI_EMBEDDING_DEPLOYMENT,
+        AZURE_OPENAI_ENDPOINT,
+        AZURE_SEARCH_DEPENDENCY_INDEX,
+        AZURE_SEARCH_ENDPOINT,
+        AZURE_SEARCH_RCA_INDEX,
+        AZURE_SEARCH_TSG_INDEX,
+        USE_AZURE,
+        USE_AZURE_SEARCH,
+    )
+
+    def status(ok: bool) -> str:
+        return "[bold green]✓ configured[/bold green]" if ok else "[red]✗ not configured[/red]"
+
+    rprint(Panel("[bold cyan]PF Recovery Agent – Configuration Status[/bold cyan]", expand=False))
+    rprint(f"\n[bold]Azure OpenAI (LLM)[/bold]             {status(USE_AZURE)}")
+    if USE_AZURE:
+        rprint(f"  Endpoint:   {AZURE_OPENAI_ENDPOINT}")
+        rprint(f"  Deployment: {AZURE_OPENAI_DEPLOYMENT}")
+
+    rprint(f"\n[bold]Azure OpenAI (Embeddings)[/bold]       {status(bool(USE_AZURE and AZURE_OPENAI_EMBEDDING_DEPLOYMENT))}")
+    if USE_AZURE and AZURE_OPENAI_EMBEDDING_DEPLOYMENT:
+        rprint(f"  Deployment: {AZURE_OPENAI_EMBEDDING_DEPLOYMENT}")
+
+    rprint(f"\n[bold]Azure AI Search[/bold]                 {status(USE_AZURE_SEARCH)}")
+    if USE_AZURE_SEARCH:
+        rprint(f"  Endpoint:         {AZURE_SEARCH_ENDPOINT}")
+        rprint(f"  RCA index:        {AZURE_SEARCH_RCA_INDEX}")
+        rprint(f"  TSG index:        {AZURE_SEARCH_TSG_INDEX}")
+        rprint(f"  Dependency index: {AZURE_SEARCH_DEPENDENCY_INDEX}")
+
+    if USE_AZURE_SEARCH and USE_AZURE and AZURE_OPENAI_EMBEDDING_DEPLOYMENT:
+        rprint("\n[bold green]Hybrid search (semantic + vector) is enabled.[/bold green]")
+    elif USE_AZURE_SEARCH:
+        rprint("\n[yellow]Semantic search is enabled. Set AZURE_OPENAI_EMBEDDING_DEPLOYMENT to also enable vector search.[/yellow]")
+    else:
+        rprint("\n[yellow]Azure AI Search not configured – using local keyword search fallback.[/yellow]")
 
 
 if __name__ == "__main__":
